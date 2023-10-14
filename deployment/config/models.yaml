@@ -6,9 +6,13 @@ late_fusion:
   config_path: "../../train/config/late_fusion.yaml"
   ckpt_path: "../model_weights/vint_late_fusion.pth"
 
-gnm: 
-  config_path: "../../train/config/gnm.yaml"
-  ckpt_path: "../model_weights/gnm_large.pth"
+# gnm: 
+#   config_path: "../../train/config/gnm.yaml"
+#   ckpt_path: "../model_weights/gnm_large.pth"
+
+GNM: 
+  config_path: "../../../omnimimic/policy_config/gnmv9_policy.yaml"
+  ckpt_path: "../model_weights/p1.ckpt"
 
 nomad: 
   config_path: "../../train/config/nomad.yaml"

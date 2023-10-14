@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+from omnimimic.policies import GNMPolicy
 
 import matplotlib.pyplot as plt
 import yaml
@@ -59,6 +60,10 @@ def callback_obs(msg):
             context_queue.pop(0)
             context_queue.append(obs_img)
 
+def make_policy(policy_class, policy_config):
+    if policy_class == 'GNM':
+        policy = GNMPolicy(**policy_config)
+    return policy
 
 def main(args: argparse.Namespace):
     global context_size
@@ -70,6 +75,8 @@ def main(args: argparse.Namespace):
     model_config_path = model_paths[args.model]["config_path"]
     with open(model_config_path, "r") as f:
         model_params = yaml.safe_load(f)
+    policy = make_policy("GNM", model_params)
+    
 
     context_size = model_params["context_size"]
 
@@ -79,13 +86,10 @@ def main(args: argparse.Namespace):
         print(f"Loading model from {ckpth_path}")
     else:
         raise FileNotFoundError(f"Model weights not found at {ckpth_path}")
-    model = load_model(
-        ckpth_path,
-        model_params,
-        device,
-    )
-    model = model.to(device)
-    model.eval()
+    with open(ckpth_path, 'rb') as f:
+        policy.load_state_dict(torch.load(f))
+    policy = policy.to(device)
+    policy.eval()
 
     
      # load topomap
@@ -211,7 +215,7 @@ def main(args: argparse.Namespace):
                 batch_obs_imgs = torch.cat(batch_obs_imgs, dim=0).to(device)
                 batch_goal_data = torch.cat(batch_goal_data, dim=0).to(device)
 
-                distances, waypoints = model(batch_obs_imgs, batch_goal_data)
+                distances, waypoints = policy(batch_obs_imgs, batch_goal_data)
                 distances = to_numpy(distances)
                 waypoints = to_numpy(waypoints)
                 print(waypoints)
@@ -226,6 +230,7 @@ def main(args: argparse.Namespace):
                         closest_node + 1, len(waypoints) - 1)][args.waypoint]
                     sg_img = topomap[start + min(closest_node + 1, len(waypoints) - 1)]     
         # RECOVERY MODE
+        chosen_waypoint = np.array([-chosen_waypoint[2]*5, -chosen_waypoint[1]])
         if model_params["normalize"]:
             chosen_waypoint[:2] *= (MAX_V / RATE)  
         waypoint_msg = Float32MultiArray()

@@ -22,7 +22,7 @@ tmux send-keys "roslaunch vint_locobot.launch" Enter
 tmux select-pane -t 1
 # tmux send-keys "conda activate vint_deployment" Enter
 tmux send-keys "conda activate vint_deployment" Enter
-tmux send-keys "python navigate.py $@" Enter
+tmux send-keys "python navigate_s.py $@" Enter
 
 # Run the teleop.py script in the third pane
 tmux select-pane -t 2
