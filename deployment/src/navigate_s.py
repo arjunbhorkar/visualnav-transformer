@@ -14,6 +14,7 @@ import yaml
 import rospy
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, Float32MultiArray
+from nav_msgs.msg import Odometry
 from utils import msg_to_pil, to_numpy, transform_images, load_model
 
 from vint_train.training.train_utils import get_action
@@ -40,11 +41,13 @@ with open(ROBOT_CONFIG_PATH, "r") as f:
 MAX_V = robot_config["max_v"]
 MAX_W = robot_config["max_w"]
 RATE = robot_config["frame_rate"] 
+ODOM_TOPIC = "/odom"
 
 # GLOBALS
 context_queue = []
 context_size = None  
 subgoal = []
+obs_odom = None
 
 # Load the model 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -65,8 +68,19 @@ def make_policy(policy_class, policy_config):
         policy = GNMPolicy(**policy_config)
     return policy
 
+def callback_obs_odom(msg: Odometry):
+    global obs_odom
+    x = msg.pose.pose.position.x
+    y = msg.pose.pose.position.y
+    obs_odom = [x, y]
+
 def main(args: argparse.Namespace):
     global context_size
+    global obs_odom
+
+
+    odom_curr_msg = rospy.Subscriber(
+        ODOM_TOPIC, Odometry, callback_obs_odom, queue_size=1)
 
      # load model parameters
     with open(MODEL_CONFIG_PATH, "r") as f:
@@ -218,7 +232,10 @@ def main(args: argparse.Namespace):
                 distances, waypoints = policy(batch_obs_imgs, batch_goal_data)
                 distances = to_numpy(distances)
                 waypoints = to_numpy(waypoints)
-                print(waypoints)
+
+                waypoints = np.cumsum(waypoints, axis = 1)
+
+                print(waypoints.shape)
                 # look for closest node
                 closest_node = np.argmin(distances)
                 # chose subgoal and output waypoints
@@ -230,7 +247,8 @@ def main(args: argparse.Namespace):
                         closest_node + 1, len(waypoints) - 1)][args.waypoint]
                     sg_img = topomap[start + min(closest_node + 1, len(waypoints) - 1)]     
         # RECOVERY MODE
-        chosen_waypoint = np.array([-chosen_waypoint[2]*5, -chosen_waypoint[1]])
+
+        chosen_waypoint = np.array([-chosen_waypoint[2], chosen_waypoint[1]])
         if model_params["normalize"]:
             chosen_waypoint[:2] *= (MAX_V / RATE)  
         waypoint_msg = Float32MultiArray()

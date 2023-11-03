@@ -2,15 +2,20 @@ import argparse
 import os
 from utils import msg_to_pil 
 import time
+import numpy as np
 
 # ROS
 import rospy
 from sensor_msgs.msg import Image
 from sensor_msgs.msg import Joy
+from nav_msgs.msg import Odometry
 
 IMAGE_TOPIC = "/usb_cam/image_raw"
 TOPOMAP_IMAGES_DIR = "../topomaps/images"
+ODOM_TOPIC = "/odom"
+
 obs_img = None
+obs_odom = None
 
 
 def remove_files_in_dir(dir_path: str):
@@ -29,6 +34,12 @@ def callback_obs(msg: Image):
     global obs_img
     obs_img = msg_to_pil(msg)
 
+def callback_obs_odom(msg: Odometry):
+    global obs_odom
+    x = msg.pose.pose.position.x
+    y = msg.pose.pose.position.y
+    obs_odom = [x, y]
+    #print(obs_odom)
 
 def callback_joy(msg: Joy):
     if msg.buttons[0]:
@@ -37,9 +48,13 @@ def callback_joy(msg: Joy):
 
 def main(args: argparse.Namespace):
     global obs_img
+    global obs_odom
+
     rospy.init_node("CREATE_TOPOMAP", anonymous=False)
     image_curr_msg = rospy.Subscriber(
         IMAGE_TOPIC, Image, callback_obs, queue_size=1)
+    odom_curr_msg = rospy.Subscriber(
+        ODOM_TOPIC, Odometry, callback_obs_odom, queue_size=1)
     subgoals_pub = rospy.Publisher(
         "/subgoals", Image, queue_size=1)
     joy_sub = rospy.Subscriber("joy", Joy, callback_joy)
@@ -57,16 +72,25 @@ def main(args: argparse.Namespace):
     print("Registered with master node. Waiting for images...")
     i = 0
     start_time = float("inf")
+    points = []
     while not rospy.is_shutdown():
         if obs_img is not None:
+            if len(points) > 0 and np.linalg.norm(np.array(obs_odom) - np.array(points[-1])) < 0.01:
+                rate.sleep()
+                start_time = time.time()
+                obs_img = None
+                continue
+
             obs_img.save(os.path.join(topomap_name_dir, f"{i}.png"))
-            print("published image", i)
+            points.append(obs_odom)
+            print(f"published image at {obs_odom}", i)
             i += 1
             rate.sleep()
             start_time = time.time()
             obs_img = None
         if time.time() - start_time > 2 * args.dt:
             print(f"Topic {IMAGE_TOPIC} not publishing anymore. Shutting down...")
+            print(points)
             rospy.signal_shutdown("shutdown")
 
 

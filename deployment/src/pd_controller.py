@@ -43,6 +43,7 @@ def clip_angle(theta) -> float:
 def pd_controller(waypoint: np.ndarray) -> Tuple[float]:
 	"""PD controller for the robot"""
 	assert len(waypoint) == 2 or len(waypoint) == 4, "waypoint must be a 2D or 4D vector"
+	print(f'waypoint: {waypoint}')
 	if len(waypoint) == 2:
 		dx, dy = waypoint
 	else:
@@ -57,6 +58,8 @@ def pd_controller(waypoint: np.ndarray) -> Tuple[float]:
 	else:
 		v = dx / DT
 		w = np.arctan(dy/dx) / DT
+
+	print(v, w)
 	v = np.clip(v, 0, MAX_V)
 	w = np.clip(w, -MAX_W, MAX_W)
 	return v, w
