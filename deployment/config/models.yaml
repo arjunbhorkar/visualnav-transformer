@@ -12,7 +12,7 @@ late_fusion:
 
 GNM: 
   config_path: "../../../omnimimic/policy_config/gnmv9_policy.yaml"
-  ckpt_path: "../model_weights/policy_epoch_70_seed_50.ckpt"
+  ckpt_path: "../model_weights/policy_epoch_550_seed_50.ckpt"
 
 nomad: 
   config_path: "../../train/config/nomad.yaml"

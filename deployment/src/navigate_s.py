@@ -42,6 +42,8 @@ MAX_V = robot_config["max_v"]
 MAX_W = robot_config["max_w"]
 RATE = robot_config["frame_rate"] 
 ODOM_TOPIC = "/odom"
+WPS = [[0.0021323022460110414, 2.0840790087830972e-07], [0.06273217891681686, 0.00012578891491873316], [0.3619676229196597, 0.0026890932973081113], [0.7218886355890779, -0.0012339311602330132], [1.0626941054908727, -0.03842536054966981], [1.4505703389969717, -0.08042319991650443], [1.7964071397401422, -0.1652326526676752], [2.202620964279936, -0.3668224030326212], [2.5168797890452836, -0.6630042567214929], [2.732661343986673, -1.1282807701720399], [2.754871828184938, -1.6172187410401107], [2.730043944848548, -2.1302715607601006], [2.7325520218874475, -2.6013393300211365], [2.7423687900616334, -3.1226973504048106], [2.7462606852149394, -3.5147190940836643]]
+
 
 # GLOBALS
 context_queue = []
@@ -73,6 +75,18 @@ def callback_obs_odom(msg: Odometry):
     x = msg.pose.pose.position.x
     y = msg.pose.pose.position.y
     obs_odom = [x, y]
+
+def calc_distances(obs_odom):
+    distances = []
+    for i in range(len(WPS)):
+        distances.append(np.linalg.norm(np.array(obs_odom) - np.array(WPS[i])))
+    return np.array(distances)
+
+def update_wps(obs_odom):
+    dists = calc_distances(obs_odom)
+    closest_wp = np.argmin(dists)
+    if dists[closest_wp] < 0.1:
+        WPS[closest_wp] = max(WPS*2)
 
 def main(args: argparse.Namespace):
     global context_size
@@ -219,7 +233,7 @@ def main(args: argparse.Namespace):
                 waypoints = []
                 batch_obs_imgs = []
                 batch_goal_data = []
-                for i, sg_img in enumerate(topomap[start: end + 1]):
+                for i, sg_img in enumerate(topomap):
                     transf_obs_img = transform_images(context_queue, model_params["image_size"])
                     goal_data = transform_images(sg_img, model_params["image_size"])
                     batch_obs_imgs.append(transf_obs_img)
@@ -233,19 +247,23 @@ def main(args: argparse.Namespace):
                 distances = to_numpy(distances)
                 waypoints = to_numpy(waypoints)
 
+                # distances = calc_distances(obs_odom)
                 waypoints = np.cumsum(waypoints, axis = 1)
 
-                print(waypoints.shape)
+                # print(waypoints.shape)
                 # look for closest node
                 closest_node = np.argmin(distances)
+                # update_wps(obs_odom)
+                print("closest node:", closest_node, f'shape is {distances.shape}, {waypoints.shape}')
                 # chose subgoal and output waypoints
                 if distances[closest_node] > args.close_threshold:
                     chosen_waypoint = waypoints[closest_node][args.waypoint]
-                    sg_img = topomap[start + closest_node]
+                    sg_img = topomap[closest_node]
+                    
                 else:
                     chosen_waypoint = waypoints[min(
                         closest_node + 1, len(waypoints) - 1)][args.waypoint]
-                    sg_img = topomap[start + min(closest_node + 1, len(waypoints) - 1)]     
+                    sg_img = topomap[min(closest_node + 1, len(waypoints) - 1)]     
         # RECOVERY MODE
 
         chosen_waypoint = np.array([-chosen_waypoint[2], chosen_waypoint[1]])
@@ -253,12 +271,12 @@ def main(args: argparse.Namespace):
             chosen_waypoint[:2] *= (MAX_V / RATE)  
         waypoint_msg = Float32MultiArray()
         waypoint_msg.data = chosen_waypoint
-        print(waypoint_msg)
+        # print(waypoint_msg)
         waypoint_pub.publish(waypoint_msg)
         reached_goal = closest_node == goal_node
         goal_pub.publish(reached_goal)
-        if reached_goal:
-            print("Reached goal! Stopping...")
+        # if reached_goal:
+        #     print("Reached goal! Stopping...")
         rate.sleep()
 
 
