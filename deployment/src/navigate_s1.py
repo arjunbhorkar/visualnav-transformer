@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
+from omnimimic.policies import GNMPolicy
 
 import matplotlib.pyplot as plt
 import yaml
@@ -13,6 +14,7 @@ import yaml
 import rospy
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, Float32MultiArray
+from nav_msgs.msg import Odometry
 from utils import msg_to_pil, to_numpy, transform_images, load_model
 
 from vint_train.training.train_utils import get_action
@@ -39,11 +41,15 @@ with open(ROBOT_CONFIG_PATH, "r") as f:
 MAX_V = robot_config["max_v"]
 MAX_W = robot_config["max_w"]
 RATE = robot_config["frame_rate"] 
+ODOM_TOPIC = "/odom"
+WPS = [[0.0021323022460110414, 2.0840790087830972e-07], [0.06273217891681686, 0.00012578891491873316], [0.3619676229196597, 0.0026890932973081113], [0.7218886355890779, -0.0012339311602330132], [1.0626941054908727, -0.03842536054966981], [1.4505703389969717, -0.08042319991650443], [1.7964071397401422, -0.1652326526676752], [2.202620964279936, -0.3668224030326212], [2.5168797890452836, -0.6630042567214929], [2.732661343986673, -1.1282807701720399], [2.754871828184938, -1.6172187410401107], [2.730043944848548, -2.1302715607601006], [2.7325520218874475, -2.6013393300211365], [2.7423687900616334, -3.1226973504048106], [2.7462606852149394, -3.5147190940836643]]
+
 
 # GLOBALS
 context_queue = []
 context_size = None  
 subgoal = []
+obs_odom = None
 
 # Load the model 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -59,9 +65,36 @@ def callback_obs(msg):
             context_queue.pop(0)
             context_queue.append(obs_img)
 
+def make_policy(policy_class, policy_config):
+    if policy_class == 'GNM':
+        policy = GNMPolicy(**policy_config)
+    return policy
+
+def callback_obs_odom(msg: Odometry):
+    global obs_odom
+    x = msg.pose.pose.position.x
+    y = msg.pose.pose.position.y
+    obs_odom = [x, y]
+
+def calc_distances(obs_odom):
+    distances = []
+    for i in range(len(WPS)):
+        distances.append(np.linalg.norm(np.array(obs_odom) - np.array(WPS[i])))
+    return np.array(distances)
+
+def update_wps(obs_odom):
+    dists = calc_distances(obs_odom)
+    closest_wp = np.argmin(dists)
+    if dists[closest_wp] < 0.1:
+        WPS[closest_wp] = max(WPS*2)
 
 def main(args: argparse.Namespace):
     global context_size
+    global obs_odom
+
+
+    odom_curr_msg = rospy.Subscriber(
+        ODOM_TOPIC, Odometry, callback_obs_odom, queue_size=1)
 
      # load model parameters
     with open(MODEL_CONFIG_PATH, "r") as f:
@@ -70,6 +103,8 @@ def main(args: argparse.Namespace):
     model_config_path = model_paths[args.model]["config_path"]
     with open(model_config_path, "r") as f:
         model_params = yaml.safe_load(f)
+    policy = make_policy("GNM", model_params)
+    
 
     context_size = model_params["context_size"]
 
@@ -79,13 +114,10 @@ def main(args: argparse.Namespace):
         print(f"Loading model from {ckpth_path}")
     else:
         raise FileNotFoundError(f"Model weights not found at {ckpth_path}")
-    model = load_model(
-        ckpth_path,
-        model_params,
-        device,
-    )
-    model = model.to(device)
-    model.eval()
+    with open(ckpth_path, 'rb') as f:
+        policy.load_state_dict(torch.load(f))
+    policy = policy.to(device)
+    policy.eval()
 
     
      # load topomap
@@ -211,13 +243,13 @@ def main(args: argparse.Namespace):
                 batch_obs_imgs = torch.cat(batch_obs_imgs, dim=0).to(device)
                 batch_goal_data = torch.cat(batch_goal_data, dim=0).to(device)
 
-                distances, waypoints = model(batch_obs_imgs, batch_goal_data)
+                distances, waypoints = policy(batch_obs_imgs, batch_goal_data)
                 distances = to_numpy(distances)
                 waypoints = to_numpy(waypoints)
-                # print(waypoints)
-                # look for closest node
+
+                waypoints = np.cumsum(waypoints, axis = 1)
                 closest_node = np.argmin(distances)
-                print(f'Closest node is: {closest_node}')
+                print(f'Closest node is: {closest_node}, {args.waypoint}')
                 # chose subgoal and output waypoints
                 if distances[closest_node] > args.close_threshold:
                     chosen_waypoint = waypoints[closest_node][args.waypoint]
@@ -227,16 +259,18 @@ def main(args: argparse.Namespace):
                         closest_node + 1, len(waypoints) - 1)][args.waypoint]
                     sg_img = topomap[start + min(closest_node + 1, len(waypoints) - 1)]     
         # RECOVERY MODE
+
+        chosen_waypoint = np.array([-chosen_waypoint[2], chosen_waypoint[1]])
         if model_params["normalize"]:
             chosen_waypoint[:2] *= (MAX_V / RATE)  
         waypoint_msg = Float32MultiArray()
         waypoint_msg.data = chosen_waypoint
-        print(waypoint_msg)
+        # print(waypoint_msg)
         waypoint_pub.publish(waypoint_msg)
         reached_goal = closest_node == goal_node
         goal_pub.publish(reached_goal)
-        if reached_goal:
-            print("Reached goal! Stopping...")
+        # if reached_goal:
+        #     print("Reached goal! Stopping...")
         rate.sleep()
 
 
